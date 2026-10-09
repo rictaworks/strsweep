@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestHelp(t *testing.T) {
 	}
 }
 func TestCLIWorkflow(t *testing.T) {
-	dir := t.TempDir()
+	dir := testDir(t)
 	path := filepath.Join(dir, "main.go")
 	original := []byte("package example\nvar message = \"hello world\"\n")
 	if e := os.WriteFile(path, original, 0644); e != nil {
@@ -61,7 +62,14 @@ func TestCLIWorkflow(t *testing.T) {
 	}
 	out.Reset()
 	err.Reset()
-	if code := run([]string{"apply", dir, "--yes"}, &out, &err); code != 0 {
+	code := run([]string{"apply", dir, "--yes"}, &out, &err)
+	if runtime.GOOS == "windows" {
+		if code != 3 || !strings.Contains(err.String(), "ACL") {
+			t.Fatalf("unsupported platform did not fail closed: %d %s", code, &err)
+		}
+		return
+	}
+	if code != 0 {
 		t.Fatalf("apply code=%d: %s", code, &err)
 	}
 	if !strings.Contains(out.String(), "置換済") {
@@ -81,7 +89,7 @@ func TestCLIWorkflow(t *testing.T) {
 	}
 }
 func TestCLIParseError(t *testing.T) {
-	dir := t.TempDir()
+	dir := testDir(t)
 	if e := os.WriteFile(filepath.Join(dir, "bad.go"), []byte("package p\nvar ="), 0644); e != nil {
 		t.Fatal(e)
 	}
@@ -102,4 +110,13 @@ func TestNullIsNotTerminal(t *testing.T) {
 	if isTerminal(f) {
 		t.Fatal("null device is not a terminal")
 	}
+}
+
+func testDir(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

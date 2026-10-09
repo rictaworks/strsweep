@@ -31,6 +31,7 @@ type literal struct {
 	value      string
 }
 type source struct {
+	info     fs.FileInfo
 	path     string
 	data     []byte
 	mode     fs.FileMode
@@ -38,6 +39,7 @@ type source struct {
 	literals []literal
 }
 type pkg struct {
+	dirInfo      fs.FileInfo
 	dir, name    string
 	files        []*source
 	names        map[string]bool
@@ -53,6 +55,7 @@ type Candidate struct {
 	Count                int
 }
 type Result struct {
+	rootInfo   fs.FileInfo
 	Root       string
 	Rows       []*Row
 	Candidates []Candidate
@@ -65,23 +68,14 @@ func Scan(root string, progress func(int, int, string)) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := filepath.EvalSymlinks(abs)
+	pinned, err := pinRoot(abs, nil)
 	if err != nil {
 		return nil, err
 	}
-	if resolved != abs {
-		return nil, fmt.Errorf("symlink root or ancestor is not supported: %s", root)
-	}
-	info, err := os.Lstat(abs)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("not a directory: %s", root)
-	}
-	r := &Result{Root: abs}
+	defer pinned.root.Close()
+	r := &Result{Root: abs, rootInfo: pinned.info}
 	var paths []string
-	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, e error) error {
+	err = fs.WalkDir(pinned.root.FS(), ".", func(path string, d fs.DirEntry, e error) error {
 		if e != nil {
 			return e
 		}
@@ -89,13 +83,13 @@ func Scan(root string, progress func(int, int, string)) (*Result, error) {
 			return nil
 		}
 		if d.IsDir() {
-			if path != abs && (d.Name() == "vendor" || d.Name() == "testdata" || strings.HasPrefix(d.Name(), ".")) {
+			if path != "." && (d.Name() == "vendor" || d.Name() == "testdata" || strings.HasPrefix(d.Name(), ".")) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		if d.Type().IsRegular() && strings.HasSuffix(path, ".go") {
-			paths = append(paths, path)
+			paths = append(paths, filepath.FromSlash(path))
 		}
 		return nil
 	})
@@ -105,7 +99,7 @@ func Scan(root string, progress func(int, int, string)) (*Result, error) {
 	sort.Strings(paths)
 	groups := map[string]*pkg{}
 	for _, path := range paths {
-		rel, _ := filepath.Rel(abs, path)
+		rel := path
 		r.Rows = append(r.Rows, &Row{Path: filepath.ToSlash(rel), Status: "未処理"})
 	}
 	for i, path := range paths {
@@ -113,23 +107,22 @@ func Scan(root string, progress func(int, int, string)) (*Result, error) {
 		if progress != nil {
 			progress(i+1, len(paths), row.Path)
 		}
-		info, e := os.Lstat(path)
-		if e != nil {
-			return r, e
-		}
-		if !info.Mode().IsRegular() {
-			row.Status = "エラー（通常ファイルではありません）"
-			return r, fmt.Errorf("not a regular file: %s", path)
-		}
-		data, e := os.ReadFile(path)
+		data, info, e := readRegular(pinned.root, path)
 		if e != nil {
 			row.Status = "エラー（読込失敗）"
 			return r, fmt.Errorf("%s: %w", row.Path, e)
 		}
+		relativePath := path
+		path = filepath.Join(abs, path)
 		dir := filepath.Dir(path)
 		p := groups[dir]
 		if p == nil {
 			p = &pkg{dir: dir, names: map[string]bool{}, declarations: map[string]bool{}, values: map[string]string{}, counts: map[string]int{}}
+			dirInfo, e := pinned.root.Lstat(filepath.Dir(relativePath))
+			if e != nil {
+				return r, e
+			}
+			p.dirInfo = dirInfo
 			groups[dir] = p
 			r.packages = append(r.packages, p)
 		}
@@ -149,7 +142,7 @@ func Scan(root string, progress func(int, int, string)) (*Result, error) {
 			row.Status = "エラー（構文解析失敗）"
 			return r, fmt.Errorf("%s: %w", row.Path, e)
 		}
-		src := &source{path: path, data: data, mode: info.Mode(), row: row}
+		src := &source{path: path, data: data, mode: info.Mode(), row: row, info: info}
 		if tree != nil {
 			ast.Inspect(tree, func(n ast.Node) bool {
 				if selector, ok := n.(*ast.SelectorExpr); ok && !own {
@@ -247,7 +240,7 @@ func Scan(root string, progress func(int, int, string)) (*Result, error) {
 	}
 	for _, p := range r.packages {
 		if p.old == nil {
-			if _, e := os.Lstat(filepath.Join(p.dir, GeneratedName)); e == nil {
+			if _, e := pinned.root.Lstat(filepath.Join(packageRelative(abs, p.dir), GeneratedName)); e == nil {
 				p.conflict = true
 			} else if !os.IsNotExist(e) {
 				return r, e
@@ -383,3 +376,5 @@ func readExisting(tree *ast.File, p *pkg) error {
 	}
 	return nil
 }
+
+func packageRelative(root, dir string) string { rel, _ := filepath.Rel(root, dir); return rel }
