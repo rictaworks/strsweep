@@ -1,4 +1,4 @@
-//go:build unix
+//go:build linux
 
 package core
 
@@ -11,7 +11,7 @@ import (
 )
 
 func TestScanDoesNotOpenNamedPipes(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	pipe := filepath.Join(root, "pipe.go")
 	if err := syscall.Mkfifo(pipe, 0600); err != nil {
 		t.Skipf("named pipes unavailable: %v", err)
