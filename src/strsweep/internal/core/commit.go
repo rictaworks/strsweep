@@ -172,9 +172,31 @@ func commit(changes []Change, ops fileOps) error {
 			if !s.applied {
 				continue
 			}
-			recovery := ".strsweep-recovery-" + rand.Text()
+			recoveryDir := ".strsweep-recovery-" + rand.Text()
+			recovery := filepath.Join(recoveryDir, "snapshot")
 			recoveryPath := filepath.Join(s.dir.path, recovery)
-			err := error(nil)
+			// A private container protects recovery data without chmodding the
+			// captured inode, which may have hard links outside this tree.
+			err := s.dir.root.Mkdir(recoveryDir, 0700)
+			if err != nil {
+				keepBackups = true
+				messages = append(messages, fmt.Sprintf("recovery failed for %s: %v; backup: %s", s.change.Path, err, filepath.Join(s.dir.path, s.backup)))
+				continue
+			}
+			recoveryHandle, e := s.dir.child(recoveryDir, nil)
+			if e != nil {
+				keepBackups = true
+				messages = append(messages, fmt.Sprintf("recovery failed for %s: %v", s.change.Path, e))
+				continue
+			}
+			// Hold this handle through all recovery, including exclusive
+			// relinking of an editor's captured inode into the package.
+			defer recoveryHandle.root.Close()
+			if !privateRecoveryDirectory(recoveryHandle.info) {
+				keepBackups = true
+				messages = append(messages, "recovery directory is not private: "+recoveryHandle.path)
+				continue
+			}
 			if ops.beforeRename != nil {
 				err = ops.beforeRename(s.change.Path, recoveryPath)
 			}
@@ -185,36 +207,24 @@ func commit(changes []Change, ops fileOps) error {
 				_, err = s.dir.root.Lstat(s.name)
 			}
 			if err == nil {
-				err = s.dir.root.Rename(s.name, recovery)
+				err = recoveryRename(s.dir.root, s.name, recoveryHandle.root, "snapshot")
 			}
 			if err != nil {
+				_ = s.dir.root.Remove(recoveryDir)
 				keepBackups = true
 				messages = append(messages, fmt.Sprintf("recovery failed for %s: %v; backup: %s", s.change.Path, err, filepath.Join(s.dir.path, s.backup)))
 				continue
 			}
 			// Never delete this captured inode: an editor may still hold it open and
 			// write after rollback returns. Its name is always reported for recovery.
-			messages = append(messages, "recovery snapshot: "+recoveryPath)
-			data, info, readErr := readRegular(s.dir.root, recovery)
-			unchanged := readErr == nil && os.SameFile(s.installed, info) && bytes.Equal(data, s.change.After) && info.Mode() == s.change.Mode
-			// Keep recovery snapshots private even if the replaced source was
-			// public: an open editor may write sensitive content later.
-			if readErr == nil {
-				f, e := s.dir.root.OpenFile(recovery, os.O_RDONLY|nonblockFlag(), 0)
-				if e == nil {
-					fi, se := f.Stat()
-					if se == nil && os.SameFile(fi, info) {
-						e = f.Chmod(0600)
-					} else {
-						e = fmt.Errorf("snapshot identity changed")
-					}
-					_ = f.Close()
-				}
-				if e != nil {
-					keepBackups = true
-					messages = append(messages, fmt.Sprintf("snapshot permission restriction failed: %s: %v", recoveryPath, e))
-				}
+			if e := recoveryHandle.checkPath(); e != nil {
+				keepBackups = true
+				messages = append(messages, "recovery snapshot retained in a moved directory; original location is no longer reliable: "+recoveryPath)
+			} else {
+				messages = append(messages, "recovery snapshot: "+recoveryPath)
 			}
+			data, info, readErr := readRegular(recoveryHandle.root, "snapshot")
+			unchanged := readErr == nil && os.SameFile(s.installed, info) && bytes.Equal(data, s.change.After) && info.Mode() == s.change.Mode
 			restore := s.backup
 			restoreTemp := ""
 			if unchanged && s.change.Exists {
@@ -250,7 +260,11 @@ func commit(changes []Change, ops fileOps) error {
 				err = s.dir.checkPath()
 			}
 			if err == nil {
-				err = s.dir.root.Link(restore, s.name)
+				if restore == recovery {
+					err = recoveryLink(recoveryHandle.root, "snapshot", s.dir.root, s.name)
+				} else {
+					err = s.dir.root.Link(restore, s.name)
+				}
 			} // Exclusive: never overwrite another editor's new file.
 			if err != nil {
 				keepBackups = true
