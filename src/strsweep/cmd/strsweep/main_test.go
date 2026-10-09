@@ -31,6 +31,9 @@ func TestHelp(t *testing.T) {
 	}
 }
 func TestCLIWorkflow(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux-only CLI workflow")
+	}
 	dir := testDir(t)
 	path := filepath.Join(dir, "main.go")
 	original := []byte("package example\nvar message = \"hello world\"\n")
@@ -63,12 +66,6 @@ func TestCLIWorkflow(t *testing.T) {
 	out.Reset()
 	err.Reset()
 	code := run([]string{"apply", dir, "--yes"}, &out, &err)
-	if runtime.GOOS == "windows" {
-		if code != 3 || !strings.Contains(err.String(), "ACL") {
-			t.Fatalf("unsupported platform did not fail closed: %d %s", code, &err)
-		}
-		return
-	}
 	if code != 0 {
 		t.Fatalf("apply code=%d: %s", code, &err)
 	}

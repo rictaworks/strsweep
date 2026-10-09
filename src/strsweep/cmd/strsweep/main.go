@@ -13,6 +13,7 @@ import (
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 const usage = `strsweep: Go文字列リテラルをパッケージ内の非公開定数へ抽出します。
+対応環境: Linux / Go 1.25以上でビルド
 使い方:
   strsweep scan <dir>
   strsweep apply <dir> --yes

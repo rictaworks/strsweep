@@ -11,10 +11,7 @@ go build -o strsweep ./src/strsweep/cmd/strsweep
 ./strsweep --help
 ```
 
-対応環境:
-- Linux・macOS・BSD: scan / apply
-- Windows: scanのみ。ACLをPOSIX権限ビットで安全に再現できないため、変更があるapplyは書き込み前に終了コード3で中止します
-- JavaScript/Wasm・Plan 9: パス差し替え競合への保護が十分でないため、処理を中止します
+対応環境はLinuxのみです。Windows・macOS・BSDなど、それ以外の環境でscan/applyを実行した場合は、ファイルを変更せずエラーで終了します。
 
 ## 使い方
 
@@ -26,7 +23,7 @@ go build -o strsweep ./src/strsweep/cmd/strsweep
 ./strsweep apply ./path/to/project --yes
 ```
 
-進捗表はパス順で、検出・除外・対象の件数と状態、合計を標準出力へ表示します。候補一覧の値は引用・エスケープされるため、改行を含む文字列も1行で確認できます。Linux・macOS・BSD・Windowsでは標準エラーが端末の場合だけ走査中の1行進捗を表示します。他のOSとリダイレクト時には、通常の進捗表のみ出力します。
+進捗表はパス順で、検出・除外・対象の件数と状態、合計を標準出力へ表示します。候補一覧の値は引用・エスケープされるため、改行を含む文字列も1行で確認できます。標準エラーが端末の場合だけ走査中の1行進捗を表示します。リダイレクト時には、通常の進捗表のみ出力します。
 
 ### 抽出と命名
 

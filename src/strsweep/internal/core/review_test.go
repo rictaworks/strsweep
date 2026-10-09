@@ -1,4 +1,4 @@
-//go:build !windows && !js && !plan9
+//go:build linux
 
 package core
 
@@ -135,5 +135,46 @@ func TestReviewRollbackReportsRetainedOriginalBackups(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("original content backup was not retained")
+	}
+}
+
+func TestReviewBootstrapRejectsRootAndAncestorSymlinks(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		for _, ancestor := range []bool{false, true} {
+			name := "root-absolute"
+			if ancestor {
+				name = "ancestor-absolute"
+			}
+			if relative {
+				name += "-relative"
+			}
+			t.Run(name, func(t *testing.T) {
+				base := testDir(t)
+				real := filepath.Join(base, "real")
+				writeFixture(t, real, "nested/a.go", "package demo\nvar A = \"outside\"\n")
+				target := filepath.Join(real, "nested")
+				if ancestor {
+					target = real
+				}
+				if relative {
+					var err error
+					target, err = filepath.Rel(base, target)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				link := filepath.Join(base, "alias")
+				if err := os.Symlink(target, link); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				root := link
+				if ancestor {
+					root = filepath.Join(root, "nested")
+				}
+				if result, err := Scan(root, nil); err == nil || result != nil {
+					t.Fatalf("symlink bootstrap returned result=%v, err=%v", result, err)
+				}
+			})
+		}
 	}
 }

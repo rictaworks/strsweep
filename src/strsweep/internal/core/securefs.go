@@ -19,20 +19,12 @@ type dirHandle struct {
 }
 
 func securePlatform() error {
-	if runtime.GOOS == "js" || runtime.GOOS == "plan9" {
-		return fmt.Errorf("race-resistant filesystem access is unsupported on %s", runtime.GOOS)
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("strsweep supports Linux only (current platform: %s)", runtime.GOOS)
 	}
 	return nil
 }
-func applyPlatform() error {
-	if err := securePlatform(); err != nil {
-		return err
-	}
-	if runtime.GOOS == "windows" {
-		return fmt.Errorf("apply is unsupported on Windows: POSIX modes cannot safely preserve Windows ACLs; scan is available")
-	}
-	return nil
-}
+func applyPlatform() error { return securePlatform() }
 
 // Bootstrap from a pinned volume root. Every component is selected through
 // its parent's handle, so an ancestor symlink swap cannot redirect OpenRoot.
